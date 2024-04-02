@@ -28,6 +28,7 @@ import org.chipsalliance.cde.config.Parameters
 import utility._
 import utils._
 import xiangshan._
+import xiangshan.backend.Bundles.DynInst
 import xiangshan.backend.rob.RobDebugRollingIO
 import xiangshan.cache.wpu._
 import xiangshan.mem.{AddPipelineReg, HasL1PrefetchSourceParameter}
@@ -389,6 +390,7 @@ class DCacheWordReqWithVaddr(implicit p: Parameters) extends DCacheWordReq {
 class DCacheWordReqWithVaddrAndPfFlag(implicit p: Parameters) extends DCacheWordReqWithVaddr {
   val prefetch = Bool()
   val vecValid = Bool()
+  val difftest_uop = if (env.EnableDifftest) Some(new DynInst) else None
 
   def toDCacheWordReqWithVaddr() = {
     val res = Wire(new DCacheWordReqWithVaddr)

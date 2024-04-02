@@ -23,8 +23,10 @@ import xiangshan._
 import utils._
 import utility._
 import xiangshan.cache._
+import xiangshan.mem._
 import difftest._
 import freechips.rocketchip.util._
+import xiangshan.backend.fu.FuType._
 
 class SbufferFlushBundle extends Bundle {
   val valid = Output(Bool())
@@ -182,7 +184,10 @@ class SbufferData(implicit p: Parameters) extends XSModule with HasSbufferConst 
   io.maskOut := mask
 }
 
-class Sbuffer(implicit p: Parameters) extends DCacheModule with HasSbufferConst with HasPerfEvents {
+class Sbuffer(implicit p: Parameters)
+  extends DCacheModule
+    with HasSbufferConst
+    with HasPerfEvents {
   val io = IO(new Bundle() {
     val hartId = Input(UInt(8.W))
     val in = Vec(EnsbufferWidth, Flipped(Decoupled(new DCacheWordReqWithVaddrAndPfFlag)))  //Todo: store logic only support Width == 2 now
@@ -840,21 +845,131 @@ class Sbuffer(implicit p: Parameters) extends DCacheModule with HasSbufferConst 
   }
 
   if (env.EnableDifftest) {
-    for (i <- 0 until EnsbufferWidth) {
-      val storeCommit = io.in(i).fire && io.in(i).bits.vecValid
-      val waddr = ZeroExt(Cat(io.in(i).bits.addr(PAddrBits - 1, 3), 0.U(3.W)), 64)
-      val sbufferMask = shiftMaskToLow(io.in(i).bits.addr, io.in(i).bits.mask)
-      val sbufferData = shiftDataToLow(io.in(i).bits.addr, io.in(i).bits.data)
-      val wmask = sbufferMask
-      val wdata = sbufferData & MaskExpand(sbufferMask)
 
-      val difftest = DifftestModule(new DiffStoreEvent, delay = 2)
-      difftest.coreid := io.hartId
-      difftest.index  := i.U
-      difftest.valid  := storeCommit
-      difftest.addr   := waddr
-      difftest.data   := wdata
-      difftest.mask   := wmask
+    def UIntSlice(in: UInt, High: UInt, Low: UInt): UInt = {
+      val maxNum = in.getWidth
+      val result = Wire(Vec(maxNum, Bool()))
+
+      for (i <- 0 until maxNum) {
+        when (Low + i.U <= High) {
+          result(i) := in(Low + i.U)
+        }.otherwise{
+          result(i) := 0.U
+        }
+      }
+
+      result.asUInt
+    }
+
+    // Onlt when VLEN = 128
+    def getVseFlow(EEB: UInt): UInt = {
+      val flow = WireDefault(0.U(log2Up(VecMemFLOWMaxNumber + 1).W))
+
+      switch(EEB) {
+        is (1.U) { flow := 16.U}
+        is (2.U) { flow :=  8.U}
+        is (4.U) { flow :=  4.U}
+        is (8.U) { flow :=  2.U}
+      }
+
+      flow
+    }
+
+    for (i <- 0 until EnsbufferWidth) {
+
+      val uop             = io.in(i).bits.difftest_uop.get
+      val isVse           = isVStore(uop.fuType) && LSUOpType.isUStride(uop.fuOpType)
+      val isVsm           = isVStore(uop.fuType) && VstuType.isMasked(uop.fuOpType)
+      val isVsr           = isVStore(uop.fuType) && VstuType.isWhole(uop.fuOpType)
+
+      val isVSLine        = isVse || isVsm || isVsr
+      val fuOpType        = uop.fuOpType
+      val vpu             = uop.vpu
+      val vtype           = vpu.vtype
+      val vsew            = vtype.vsew
+      val lmul            = vtype.vlmul
+      val veew            = uop.vpu.veew
+      val EEB             = (1.U << veew).asUInt //Only when VLEN=128 effective element byte
+      val EEW             = (EEB << 4.U).asUInt
+      val mop             = LSUOpType.getVecLSMop(fuOpType)
+      val nf              = Mux(isVsr, 0.U, vpu.nf)
+      val vm              = vpu.vm
+      val emul            = Mux(
+                              isVsr,
+                              GenUSWholeEmul(vpu.nf),
+                              Mux(isVsm, 0.U, EewLog2(veew) - vsew +lmul)
+                            )
+
+      val isSegment       = nf =/= 0.U && !isVsm
+      val instType        = Cat(isSegment, mop)
+      val flows           = Mux(
+                              isVse,
+                              getVseFlow(EEB),
+                              Mux(isVsr, 8.U, GenRealFlowNum(instType, emul, lmul, veew, vsew))
+                            )
+
+      val rawData         = io.in(i).bits.data
+      val rawMask         = io.in(i).bits.mask
+      val rawAddr         = io.in(i).bits.addr
+
+      val difftest_common = DifftestModule(new DiffStoreEvent, delay = 2)
+      when (isVSLine) {
+        val splitMask       = UIntSlice(rawMask, EEB, 0.U)(7,0)  // Byte
+        val splitData       = UIntSlice(rawData, EEW, 0.U)(63,0) // Double word
+        val storeCommit     = io.in(i).fire && (splitMask.orR || vm)
+        val waddr           = rawAddr
+        val wmask           = splitMask
+        val wdata           = splitData & MaskExpand(splitMask)
+
+        difftest_common.coreid := io.hartId
+        difftest_common.index  := (i*VecMemFLOWMaxNumber).U
+        difftest_common.valid  := storeCommit
+        difftest_common.addr   := waddr
+        difftest_common.data   := wdata
+        difftest_common.mask   := wmask
+      }.otherwise{
+        val storeCommit     = io.in(i).fire && io.in(i).bits.vecValid
+        val waddr           = ZeroExt(Cat(io.in(i).bits.addr(PAddrBits - 1, 3), 0.U(3.W)), 64)
+        val sbufferMask     = shiftMaskToLow(io.in(i).bits.addr, io.in(i).bits.mask)
+        val sbufferData     = shiftDataToLow(io.in(i).bits.addr, io.in(i).bits.data)
+        val wmask           = sbufferMask
+        val wdata           = sbufferData & MaskExpand(sbufferMask)
+
+        difftest_common.coreid := io.hartId
+        difftest_common.index  := (i*VecMemFLOWMaxNumber).U
+        difftest_common.valid  := storeCommit
+        difftest_common.addr   := waddr
+        difftest_common.data   := wdata
+        difftest_common.mask   := wmask
+      }
+
+      for (index <- 1 until VecMemFLOWMaxNumber) {
+        val difftest = DifftestModule(new DiffStoreEvent, delay = 2)
+
+        when (index.U < flows && isVSLine) {
+          val splitMask = UIntSlice(rawMask, (EEB*(index+1).U - 1.U), EEB*index.U)(7,0)  // Byte
+          val splitData = UIntSlice(rawData, (EEW*(index+1).U - 1.U), EEW*index.U)(63,0) // Double word
+          val storeCommit = io.in(i).fire && (splitMask.orR || vm)
+          val waddr = rawAddr + EEB*index.U
+          val wmask = splitMask
+          val wdata = splitData & MaskExpand(splitMask)
+
+          difftest.coreid := io.hartId
+          difftest.index  := (i*VecMemFLOWMaxNumber+index).U
+          difftest.valid  := storeCommit
+          difftest.addr   := waddr
+          difftest.data   := wdata
+          difftest.mask   := wmask
+        }.otherwise{
+          difftest.coreid := 0.U
+          difftest.index  := 0.U
+          difftest.valid  := 0.U
+          difftest.addr   := 0.U
+          difftest.data   := 0.U
+          difftest.mask   := 0.U
+        }
+      }
+
     }
   }
 
