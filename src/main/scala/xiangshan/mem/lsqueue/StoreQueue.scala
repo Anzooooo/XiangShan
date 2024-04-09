@@ -65,7 +65,7 @@ class DataBufferEntry (implicit p: Parameters)  extends DCacheBundle {
   val prefetch = Bool()
   val vecValid = Bool()
   // Vec difftest need it
-  val difftest_uop = if (env.EnableDifftest) Some(new DynInst) else None
+  val difftestUop = if (env.EnableDifftest) Some(new DynInst) else None
 }
 
 class StoreExceptionBuffer(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHelper {
@@ -877,8 +877,8 @@ class StoreQueue(implicit p: Parameters) extends XSModule
     dataBuffer.io.enq(i).bits.sqPtr    := rdataPtrExt(i)
     dataBuffer.io.enq(i).bits.prefetch := prefetch(ptr)
     dataBuffer.io.enq(i).bits.vecValid := !isVec(ptr) || vecDataValid(ptr) // scalar is always valid
-    if (dataBuffer.io.enq(i).bits.difftest_uop.isDefined) {
-      dataBuffer.io.enq(i).bits.difftest_uop.get := uop(RegNext(rdataPtrExtNext(i).value))
+    if (dataBuffer.io.enq(i).bits.difftestUop.isDefined) {
+      dataBuffer.io.enq(i).bits.difftestUop.get := uop(ptr)
     }
   }
 
@@ -897,8 +897,8 @@ class StoreQueue(implicit p: Parameters) extends XSModule
     io.sbuffer(i).bits.wline := dataBuffer.io.deq(i).bits.wline
     io.sbuffer(i).bits.prefetch := dataBuffer.io.deq(i).bits.prefetch
     io.sbuffer(i).bits.vecValid := dataBuffer.io.deq(i).bits.vecValid
-    if (io.sbuffer(i).bits.difftest_uop.isDefined) {
-      io.sbuffer(i).bits.difftest_uop.get := dataBuffer.io.deq(i).bits.difftest_uop.get
+    if (io.sbuffer(i).bits.difftestUop.isDefined) {
+      io.sbuffer(i).bits.difftestUop.get := dataBuffer.io.deq(i).bits.difftestUop.get
     }
     // io.sbuffer(i).fire is RegNexted, as sbuffer data write takes 2 cycles.
     // Before data write finish, sbuffer is unable to provide store to load

@@ -390,7 +390,7 @@ class DCacheWordReqWithVaddr(implicit p: Parameters) extends DCacheWordReq {
 class DCacheWordReqWithVaddrAndPfFlag(implicit p: Parameters) extends DCacheWordReqWithVaddr {
   val prefetch = Bool()
   val vecValid = Bool()
-  val difftest_uop = if (env.EnableDifftest) Some(new DynInst) else None
+  val difftestUop = if (env.EnableDifftest) Some(new DynInst) else None
 
   def toDCacheWordReqWithVaddr() = {
     val res = Wire(new DCacheWordReqWithVaddr)

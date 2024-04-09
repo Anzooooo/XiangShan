@@ -877,7 +877,8 @@ class Sbuffer(implicit p: Parameters)
 
     for (i <- 0 until EnsbufferWidth) {
 
-      val uop             = io.in(i).bits.difftest_uop.get
+      val uop             = io.in(i).bits.difftestUop.get
+
       val isVse           = isVStore(uop.fuType) && LSUOpType.isUStride(uop.fuOpType)
       val isVsm           = isVStore(uop.fuType) && VstuType.isMasked(uop.fuOpType)
       val isVsr           = isVStore(uop.fuType) && VstuType.isWhole(uop.fuOpType)
@@ -912,7 +913,8 @@ class Sbuffer(implicit p: Parameters)
       val rawMask         = io.in(i).bits.mask
       val rawAddr         = io.in(i).bits.addr
 
-      val difftest_common = DifftestModule(new DiffStoreEvent, delay = 2)
+      // A common difftest interface for scalar and vector instr
+      val difftestCommon = DifftestModule(new DiffStoreEvent, delay = 2)
       when (isVSLine) {
         val splitMask       = UIntSlice(rawMask, EEB, 0.U)(7,0)  // Byte
         val splitData       = UIntSlice(rawData, EEW, 0.U)(63,0) // Double word
@@ -921,12 +923,13 @@ class Sbuffer(implicit p: Parameters)
         val wmask           = splitMask
         val wdata           = splitData & MaskExpand(splitMask)
 
-        difftest_common.coreid := io.hartId
-        difftest_common.index  := (i*VecMemFLOWMaxNumber).U
-        difftest_common.valid  := storeCommit
-        difftest_common.addr   := waddr
-        difftest_common.data   := wdata
-        difftest_common.mask   := wmask
+        difftestCommon.coreid := io.hartId
+        difftestCommon.index  := (i*VecMemFLOWMaxNumber).U
+        difftestCommon.valid  := storeCommit
+        difftestCommon.addr   := waddr
+        difftestCommon.data   := wdata
+        difftestCommon.mask   := wmask
+
       }.otherwise{
         val storeCommit     = io.in(i).fire && io.in(i).bits.vecValid
         val waddr           = ZeroExt(Cat(io.in(i).bits.addr(PAddrBits - 1, 3), 0.U(3.W)), 64)
@@ -935,12 +938,13 @@ class Sbuffer(implicit p: Parameters)
         val wmask           = sbufferMask
         val wdata           = sbufferData & MaskExpand(sbufferMask)
 
-        difftest_common.coreid := io.hartId
-        difftest_common.index  := (i*VecMemFLOWMaxNumber).U
-        difftest_common.valid  := storeCommit
-        difftest_common.addr   := waddr
-        difftest_common.data   := wdata
-        difftest_common.mask   := wmask
+        difftestCommon.coreid := io.hartId
+        difftestCommon.index  := (i*VecMemFLOWMaxNumber).U
+        difftestCommon.valid  := storeCommit
+        difftestCommon.addr   := waddr
+        difftestCommon.data   := wdata
+        difftestCommon.mask   := wmask
+
       }
 
       for (index <- 1 until VecMemFLOWMaxNumber) {
