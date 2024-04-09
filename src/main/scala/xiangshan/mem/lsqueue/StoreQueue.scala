@@ -827,7 +827,11 @@ class StoreQueue(implicit p: Parameters) extends XSModule
   // TODO: Deal with vector store mmio
   for (i <- 0 until CommitWidth) {
     val veccount = PopCount(veccommitVec.take(i))
-    when (allocated(cmtPtrExt(i).value) && isVec(cmtPtrExt(i).value) && isNotAfter(uop(cmtPtrExt(i).value).robIdx, io.rob.pendingPtr) && vecMbCommit(cmtPtrExt(i).value)) {
+    val pendingPtrCycle1 = RegNext(io.rob.pendingPtr)
+    val pendingPtrCycle2 = RegNext(pendingPtrCycle1)
+    val pendingPtrCycle3 = RegNext(pendingPtrCycle2)
+    val pendingPtrCycle4 = RegNext(pendingPtrCycle3)
+    when (allocated(cmtPtrExt(i).value) && isVec(cmtPtrExt(i).value) && isNotAfter(uop(cmtPtrExt(i).value).robIdx, pendingPtrCycle4) && vecMbCommit(cmtPtrExt(i).value)) {
       if (i == 0){
         // TODO: fixme for vector mmio
         when ((uncacheState === s_idle) || (uncacheState === s_wait && scommit > 0.U)){
@@ -933,7 +937,10 @@ class StoreQueue(implicit p: Parameters) extends XSModule
   for (i <- 0 until StoreQueueSize) {
     val fbk = io.vecFeedback
     vecCommit(i) := fbk.valid && fbk.bits.isCommit && uop(i).robIdx === fbk.bits.robidx && uop(i).uopIdx === fbk.bits.uopidx
-    when (vecCommit(i)) {
+    val vecCommitCycle1 = RegNext(vecCommit(i))
+    val vecCommitCycle2 = RegNext(vecCommitCycle1)
+    val vecCommitCycle3 = RegNext(vecCommitCycle2)
+    when (vecCommitCycle3) {
       vecMbCommit(i) := true.B
     }
   }
