@@ -910,8 +910,8 @@ class Sbuffer(implicit p: Parameters)
       // A common difftest interface for scalar and vector instr
       val difftestCommon = DifftestModule(new DiffStoreEvent, delay = 2)
       when (isVSLine) {
-        val splitMask         = UIntSlice(rawMask, EEB, 0.U)(7,0)  // Byte
-        val splitData         = UIntSlice(rawData, EEWBits, 0.U)(63,0) // Double word
+        val splitMask         = UIntSlice(rawMask, EEB - 1.U, 0.U)(7,0)  // Byte
+        val splitData         = UIntSlice(rawData, EEWBits - 1.U, 0.U)(63,0) // Double word
         val storeCommit       = io.in(i).fire && splitMask.orR && io.in(i).bits.vecValid
         val waddr             = rawAddr
         val wmask             = splitMask
@@ -950,12 +950,17 @@ class Sbuffer(implicit p: Parameters)
         //    Any valid store will definitely not have all 0 masks,
         //    and the extra part due to unaligned access must have a mask of 0
         when (index.U < flow && isVSLine) {
+          // Make NEMU-difftest happy
+          val shiftIndex  = EEB*index.U
+          val shiftFlag   = shiftIndex(2,0).orR // Double word Flag
+          val shiftBytes  = Mux(shiftFlag, shiftIndex(2,0), 0.U)
+          val shiftBits   = shiftBytes << 3.U
           val splitMask   = UIntSlice(rawMask, (EEB*(index+1).U - 1.U), EEB*index.U)(7,0)  // Byte
           val splitData   = UIntSlice(rawData, (EEWBits*(index+1).U - 1.U), EEWBits*index.U)(63,0) // Double word
           val storeCommit = io.in(i).fire && splitMask.orR  && io.in(i).bits.vecValid
-          val waddr       = rawAddr + EEB*index.U
-          val wmask       = splitMask
-          val wdata       = splitData & MaskExpand(splitMask)
+          val waddr       = Cat(rawAddr(PAddrBits - 1, 4), Cat(shiftIndex(3), 0.U(3.W)))
+          val wmask       = splitMask << shiftBytes
+          val wdata       = (splitData & MaskExpand(splitMask)) << shiftBits
 
           difftest.coreid := io.hartId
           difftest.index  := (i*VecMemFLOWMaxNumber+index).U
